@@ -24,10 +24,30 @@ ambari_flavor = 'm1.medium'
 node_flavor = 'm1.medium'
 ambari_security_group = 'ambari-ssh-http-8080'
 vagrant_project_path = '/Users/matthias/Documents/workspace-bigdatadude/vagrant-base/'
+cluster_info='.ambari_cluster.info'
+
+# Create a Log file which is later to be used to tear down the cluster
+# Already append all info as comment
+cluster_info_file = open(cluster_info, 'w')
+cluster_info_file.write('# This is a cluster-info file that describes a provisioned HDP cluster\n')
+cluster_info_file.write('# In the following all base configuration parameters are printed\n')
+cluster_info_file.write('#\n')
+cluster_info_file.write('# keypair-name: ' + keypair_name + '\n')
+cluster_info_file.write('# centos_image: ' + centos_image + '\n')
+cluster_info_file.write('# network_name: ' + network_name + '\n')
+cluster_info_file.write('# ambari_public_ip: ' + ambari_public_ip + '\n')
+cluster_info_file.write('# ambari_flavor: ' + ambari_flavor + '\n')
+cluster_info_file.write('# ambari_security_group: ' + ambari_security_group + '\n')
+cluster_info_file.write('# vagrant_project_path: ' + vagrant_project_path + '\n')
+cluster_info_file.write('#\n#\n#\n')
 
 # Properly react to errors
 class Error(Exception):
 	pass
+
+# Function that can be used to store information to the cluster_info file
+def write_cluster_info(key, value):
+	cluster_info_file.write(key + ': ' + value + '\n')
 
 # Function that checks for existing SSH key-value pair
 # if none was found just creates one
@@ -125,6 +145,7 @@ if keypair is None:
 	f = open(kp['public'],'r')
 	pubkey = f.readline()[:-1]
 	keypair = nova.keypairs.create(keypair_name, pubkey)
+write_cluster_info('keypair', keypair.id)
 
 # Check if image exists
 try:
@@ -146,4 +167,17 @@ ambari_server.add_floating_ip(ambari_public_ip)
 ambari_server.add_security_group(ambari_security_group.id)
 # SSH into ambari server
 bootstrap_ambari(ambari_public_ip.ip, keypair_name)
+write_cluster_info('server', ambari_server.id)
 
+# Finally close the clusterinfo file
+cluster_info_file.close()
+
+# Print success message
+print ''
+print ''
+print ''
+
+print 'Ambari server was sucessfully provisioned you can access the dashboard at:'
+print 'http://' + ambari_public_ip + ':8080/'
+print 'WARNING: Default passwords are still in place immideately change the password for the \'admin\' account.'
+print 'User: admin, Password: admin'
