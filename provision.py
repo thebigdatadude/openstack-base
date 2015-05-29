@@ -21,9 +21,11 @@ centos_image = 'CentOS 6.6 64bit Puppet'
 network_name = 'private'
 ambari_public_ip = '140.78.92.57'
 ambari_flavor = 'm1.medium'
+worker_flavor = 'm1.medium'
 node_flavor = 'm1.medium'
 ambari_security_group = 'ambari-ssh-http-8080'
 vagrant_project_path = '/Users/matthias/Documents/workspace-bigdatadude/vagrant-base/'
+number_of_workers = 2
 cluster_info='.ambari_cluster.info'
 
 # Create a Log file which is later to be used to tear down the cluster
@@ -168,6 +170,20 @@ ambari_server.add_security_group(ambari_security_group.id)
 # SSH into ambari server
 bootstrap_ambari(ambari_public_ip.ip, keypair_name)
 write_cluster_info('server', ambari_server.id)
+
+tmp_public_ip = find_floating_ip(None)
+# Now create the worker node
+for worker in range(1, number_of_workers):
+	worker_name = 'node' + "{0:03d}".format(worker)
+	print 'Provisioning worker: ' + worker_name + ' waiting for it to become ACTIVE'
+	worker_server = create_server(worker_name, centos_image, network_name, worker_flavor, keypair_name)
+	wait_for_server(worker_server, network_name)
+	worker_server.add_floating_ip(tmp_public_ip)
+	worker_server.add_security_group(ambari_security_group.id)
+	bootstrap_ambari(tmp_public_ip.ip, keypair_name)
+	worker_server.remove_security_group(ambari_security_group.id)
+	worker_server.remove_floating_ip(tmp_public_ip)
+	write_cluster_info('server', worker_server.id)
 
 # Finally close the clusterinfo file
 cluster_info_file.close()
