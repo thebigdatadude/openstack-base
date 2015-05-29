@@ -7,9 +7,14 @@
 import time
 import subprocess
 import os.path
+import socket
 
 from novaclient.v2 import client as nvclient
 from credentials import get_nova_creds
+
+# Properly react to errors
+class Error(Exception):
+	pass
 
 # Parse credentials (as provided through an openrc file)
 creds = get_nova_creds()
@@ -26,7 +31,11 @@ node_flavor = 'm1.medium'
 ambari_security_group = 'ambari-ssh-http-8080'
 vagrant_project_path = '/Users/matthias/Documents/workspace-bigdatadude/vagrant-base/'
 number_of_workers = 2
+domain_name='sandbox.thebigdatadude.com'
 cluster_info='.ambari_cluster.info'
+
+if os.path.isfile(cluster_info):
+	raise Error('File ' + cluster_info + ' already exists. This means a cluster is already running. Deprovision the cluster first or if you are 100% sure you can just delete the file')
 
 # Create a Log file which is later to be used to tear down the cluster
 # Already append all info as comment
@@ -42,10 +51,6 @@ cluster_info_file.write('# ambari_flavor: ' + ambari_flavor + '\n')
 cluster_info_file.write('# ambari_security_group: ' + ambari_security_group + '\n')
 cluster_info_file.write('# vagrant_project_path: ' + vagrant_project_path + '\n')
 cluster_info_file.write('#\n#\n#\n')
-
-# Properly react to errors
-class Error(Exception):
-	pass
 
 # Function that can be used to store information to the cluster_info file
 def write_cluster_info(key, value):
@@ -99,6 +104,23 @@ def wait_for_server(server, network):
 		print('Waiting for server ' + server.name + ' to become ACTIVE')
 		time.sleep(15)
 
+# Check for service ports beeing available
+def probe_port(ip, port):
+	sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+	result = sock.connect_ex((ip, port))
+	return result > 0
+
+# Wait a minute for port becoming available
+def wait_for_port(ip, port):
+	tries = 5
+	while tries > 0:
+		if probe_port(ip, port):
+			return
+		else:
+			tries -= 1
+			time.sleep(15)
+	raise Error('Service ' + ip + ' at port ' + port + ' did not become available in over a minute ... please check stack manually')
+
 # Check for the security group we need
 def find_security_group(sgname):
 	sgs = nova.security_groups.list()
@@ -109,11 +131,18 @@ def find_security_group(sgname):
 
 # Execute a command on a remote machine
 def execute_ssh(ip, private_key, command):
-	subprocess.check_call(['ssh', '-q', '-t', '-i', private_key, '-o', 'StrictHostKeyChecking=no', 'centos@' + ip, command])
+	try:
+		subprocess.check_call(['ssh', '-q', '-t', '-i', private_key, '-o', 'StrictHostKeyChecking=no', 'centos@' + ip, command])
+	except:
+		print 'Non zero exit code on ssh command: ' + command + ' please check your cluster manually'
 
 # Copy a folder to remote machine through rsync
 def rsync_folder(ip, private_key, local_folder, remote_folder):
 	subprocess.check_call(['rsync', '-azh', local_folder, '-e', 'ssh -i ' + private_key + ' -o StrictHostKeyChecking=no', 'centos@' + ip + ':' + remote_folder])
+
+# Copy a single file to the remote machien through scp
+def scp_file(ip, private_key, local_file, remote_folder):
+	subprocess.check_call(['scp', '-i', private_key, '-o', 'StrictHostKeyChecking=no', local_file, 'centos@' + ip + ':' + remote_folder ])
 
 
 # SSH into Ambari server and bootstrap it
@@ -164,26 +193,50 @@ ambari_security_group = find_security_group(ambari_security_group)
 # Create the ambari server
 ambari_server = create_server('ambari', centos_image, network_name, ambari_flavor, keypair_name)
 ambari_private_ip = wait_for_server(ambari_server, network_name)
+write_cluster_info('server', ambari_server.id)
 # Assing the floating IP
 ambari_server.add_floating_ip(ambari_public_ip)
 ambari_server.add_security_group(ambari_security_group.id)
 # SSH into ambari server
 bootstrap_ambari(ambari_public_ip.ip, keypair_name)
-write_cluster_info('server', ambari_server.id)
 
+worker_private_ips = []
+# Create worker nodes
 tmp_public_ip = find_floating_ip(None)
-# Now create the worker node
-for worker in range(1, number_of_workers):
+for worker in range(1, number_of_workers+1):
 	worker_name = 'node' + "{0:03d}".format(worker)
-	print 'Provisioning worker: ' + worker_name + ' waiting for it to become ACTIVE'
+	print 'Provisioning worker: ' + worker_name 
 	worker_server = create_server(worker_name, centos_image, network_name, worker_flavor, keypair_name)
-	wait_for_server(worker_server, network_name)
+	worker_ip = wait_for_server(worker_server, network_name)
+	write_cluster_info('server', worker_server.id)
+	worker_private_ips.append(worker_ip)
 	worker_server.add_floating_ip(tmp_public_ip)
 	worker_server.add_security_group(ambari_security_group.id)
+
 	bootstrap_ambari(tmp_public_ip.ip, keypair_name)
 	worker_server.remove_security_group(ambari_security_group.id)
 	worker_server.remove_floating_ip(tmp_public_ip)
-	write_cluster_info('server', worker_server.id)
+
+# Create hosts file: Puppet just created a dummy hosts file suitable for local Vagrant deplyoments only
+tmp_hosts_file_name = '.tmp.hosts'
+thf = open(tmp_hosts_file_name, 'w')
+
+thf.write('127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4\n::1         localhost localhost.localdomain localhost6 localhost6.localdomain6\n')
+thf.write('\n')
+thf.write('# the following entries are autogenerated by https://github.com/thebigdatadude/openstack-base\n')
+thf.write(ambari_private_ip + '\tambari.' + domain_name + ' ambari\n')
+for worker in range(1, number_of_workers+1):
+	worker_name = 'node' + "{0:03d}".format(worker)
+	thf.write(worker_private_ips[worker-1] + '\t' + worker_name + '.' + domain_name + ' ' + worker_name + '\n')
+thf.close()
+
+# upload hosts file to ambari server
+print 'All machines provisioned updating hosts file on ambari server'
+scp_file(ambari_public_ip.ip, keypair_name, tmp_hosts_file_name, '/tmp/generated-hosts-file')
+execute_ssh(ambari_public_ip.ip, keypair_name, 'sudo mv /tmp/generated-hosts-file /etc/hosts')
+print 'Instructing ambari server to copy hosts file to all workers'
+for ipw in worker_private_ips:
+	execute_ssh(ambari_public_ip.ip, keypair_name, 'sudo scp /etc/hosts root@' + ipw + ':/etc/hosts')
 
 # Finally close the clusterinfo file
 cluster_info_file.close()
@@ -194,6 +247,6 @@ print ''
 print ''
 
 print 'Ambari server was sucessfully provisioned you can access the dashboard at:'
-print 'http://' + ambari_public_ip + ':8080/'
+print 'http://' + ambari_public_ip.ip + ':8080/'
 print 'WARNING: Default passwords are still in place immideately change the password for the \'admin\' account.'
 print 'User: admin, Password: admin'
