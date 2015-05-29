@@ -26,11 +26,10 @@ centos_image = 'CentOS 6.6 64bit Puppet'
 network_name = 'private'
 ambari_public_ip = '140.78.92.57'
 ambari_flavor = 'm1.medium'
-worker_flavor = 'm1.medium'
-node_flavor = 'm1.medium'
+worker_flavor = 'm1.xlarge'
 ambari_security_group = 'ambari-ssh-http-8080'
 vagrant_project_path = '/Users/matthias/Documents/workspace-bigdatadude/vagrant-base/'
-number_of_workers = 5
+number_of_workers = 10
 domain_name='sandbox.thebigdatadude.com'
 cluster_info='.ambari_cluster.info'
 
@@ -48,6 +47,7 @@ cluster_info_file.write('# centos_image: ' + centos_image + '\n')
 cluster_info_file.write('# network_name: ' + network_name + '\n')
 cluster_info_file.write('# ambari_public_ip: ' + ambari_public_ip + '\n')
 cluster_info_file.write('# ambari_flavor: ' + ambari_flavor + '\n')
+cluster_info_file.write('# worker_flavor: ' + worker_flavor + '\n')
 cluster_info_file.write('# ambari_security_group: ' + ambari_security_group + '\n')
 cluster_info_file.write('# vagrant_project_path: ' + vagrant_project_path + '\n')
 cluster_info_file.write('#\n#\n#\n')
