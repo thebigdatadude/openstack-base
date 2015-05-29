@@ -30,7 +30,7 @@ worker_flavor = 'm1.medium'
 node_flavor = 'm1.medium'
 ambari_security_group = 'ambari-ssh-http-8080'
 vagrant_project_path = '/Users/matthias/Documents/workspace-bigdatadude/vagrant-base/'
-number_of_workers = 2
+number_of_workers = 5
 domain_name='sandbox.thebigdatadude.com'
 cluster_info='.ambari_cluster.info'
 
@@ -108,7 +108,7 @@ def wait_for_server(server, network):
 def probe_port(ip, port):
 	sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 	result = sock.connect_ex((ip, port))
-	return result > 0
+	return result == 0
 
 # Wait a minute for port becoming available
 def wait_for_port(ip, port):
@@ -118,8 +118,9 @@ def wait_for_port(ip, port):
 			return
 		else:
 			tries -= 1
+			print 'service ' + ip + ':' + str(port) + ' not availalbe waiting another 15sec'
 			time.sleep(15)
-	raise Error('Service ' + ip + ' at port ' + port + ' did not become available in over a minute ... please check stack manually')
+	raise Error('Service ' + ip + ' at port ' + str(port) + ' did not become available in over a minute ... please check stack manually')
 
 # Check for the security group we need
 def find_security_group(sgname):
@@ -147,6 +148,7 @@ def scp_file(ip, private_key, local_file, remote_folder):
 
 # SSH into Ambari server and bootstrap it
 def bootstrap_ambari(ip, private_key):
+	wait_for_port(ip, 22)
 	tries = 5
 	while tries > 0:
 		try:
@@ -212,7 +214,6 @@ for worker in range(1, number_of_workers+1):
 	worker_private_ips.append(worker_ip)
 	worker_server.add_floating_ip(tmp_public_ip)
 	worker_server.add_security_group(ambari_security_group.id)
-
 	bootstrap_ambari(tmp_public_ip.ip, keypair_name)
 	worker_server.remove_security_group(ambari_security_group.id)
 	worker_server.remove_floating_ip(tmp_public_ip)
@@ -236,7 +237,7 @@ scp_file(ambari_public_ip.ip, keypair_name, tmp_hosts_file_name, '/tmp/generated
 execute_ssh(ambari_public_ip.ip, keypair_name, 'sudo mv /tmp/generated-hosts-file /etc/hosts')
 print 'Instructing ambari server to copy hosts file to all workers'
 for ipw in worker_private_ips:
-	execute_ssh(ambari_public_ip.ip, keypair_name, 'sudo scp /etc/hosts root@' + ipw + ':/etc/hosts')
+	execute_ssh(ambari_public_ip.ip, keypair_name, 'sudo scp -o StrictHostKeyChecking=no /etc/hosts root@' + ipw + ':/etc/hosts')
 
 # Finally close the clusterinfo file
 cluster_info_file.close()
