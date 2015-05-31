@@ -147,7 +147,7 @@ def scp_file(ip, private_key, local_file, remote_folder):
 
 # Instructs the remote machine to grow its partition
 def grow_partition(ip, private_key):
-	execute_ssh(ip, private_key, 'sudo yum -y install cloud-utils-growpart')
+	execute_ssh(ip, private_key, 'sudo yum -y -q install cloud-utils-growpart')
 	execute_ssh(ip, private_key, 'sudo growpart /dev/vda 1')
 	execute_ssh(ip, private_key, 'sudo reboot')
 
