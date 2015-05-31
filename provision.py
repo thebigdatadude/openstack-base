@@ -145,6 +145,11 @@ def rsync_folder(ip, private_key, local_folder, remote_folder):
 def scp_file(ip, private_key, local_file, remote_folder):
 	subprocess.check_call(['scp', '-i', private_key, '-o', 'StrictHostKeyChecking=no', local_file, 'centos@' + ip + ':' + remote_folder ])
 
+# Instructs the remote machine to grow its partition
+def grow_partition(ip, private_key):
+	execute_ssh(ip, private_key, 'sudo yum -y install cloud-utils-growpart')
+	execute_ssh(ip, private_key, 'sudo growpart /dev/vda 1')
+	execute_ssh(ip, private_key, 'sudo reboot')
 
 # SSH into Ambari server and bootstrap it
 def bootstrap_ambari(ip, private_key):
@@ -166,6 +171,11 @@ def bootstrap_ambari(ip, private_key):
 	execute_ssh(ip, private_key, 'sudo mv /tmp/provision /vagrant')
 	execute_ssh(ip, private_key, 'sudo chown -R root:root /vagrant')
 	execute_ssh(ip, private_key, 'sudo puppet apply /vagrant/manifests/default.pp')
+
+# Set the hostname
+def set_hostname(ip, private_key, hostname):
+	execute_ssh(ip, private_key, 'sudo sed -i "s/HOSTNAME=.*/HOSTNAME=' + hostname + '/g" /etc/sysconfig/network')
+	execute_ssh(ip, private_key, 'sudo hostname ' + hostname)
 
 # SSH key selection / creation
 keypair = None
@@ -201,6 +211,8 @@ ambari_server.add_floating_ip(ambari_public_ip)
 ambari_server.add_security_group(ambari_security_group.id)
 # SSH into ambari server
 bootstrap_ambari(ambari_public_ip.ip, keypair_name)
+set_hostname(ambari_public_ip.ip, keypair_name, 'ambari.' + domain_name)
+grow_partition(ambari_public_ip.ip, keypair_name)
 
 worker_private_ips = []
 # Create worker nodes
@@ -215,6 +227,8 @@ for worker in range(1, number_of_workers+1):
 	worker_server.add_floating_ip(tmp_public_ip)
 	worker_server.add_security_group(ambari_security_group.id)
 	bootstrap_ambari(tmp_public_ip.ip, keypair_name)
+	set_hostname(tmp_public_ip.ip, keypair_name, worker_name+ '.' + domain_name)
+	grow_partition(tmp_public_ip.ip, keypair_name)
 	worker_server.remove_security_group(ambari_security_group.id)
 	worker_server.remove_floating_ip(tmp_public_ip)
 
@@ -236,6 +250,7 @@ print 'All machines provisioned updating hosts file on ambari server'
 scp_file(ambari_public_ip.ip, keypair_name, tmp_hosts_file_name, '/tmp/generated-hosts-file')
 execute_ssh(ambari_public_ip.ip, keypair_name, 'sudo mv /tmp/generated-hosts-file /etc/hosts')
 print 'Instructing ambari server to copy hosts file to all workers'
+time.sleep(25)
 for ipw in worker_private_ips:
 	execute_ssh(ambari_public_ip.ip, keypair_name, 'sudo scp -o StrictHostKeyChecking=no /etc/hosts root@' + ipw + ':/etc/hosts')
 
@@ -251,3 +266,9 @@ print 'Ambari server was sucessfully provisioned you can access the dashboard at
 print 'http://' + ambari_public_ip.ip + ':8080/'
 print 'WARNING: Default passwords are still in place immideately change the password for the \'admin\' account.'
 print 'User: admin, Password: admin'
+print ''
+print 'The following worker nodes can be used to provision your cluster'
+for worker in range(1, number_of_workers+1):
+	worker_name = 'node' + "{0:03d}".format(worker) + '.' + domain_name
+	print worker_name
+
